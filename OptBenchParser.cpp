@@ -485,8 +485,8 @@ public:
     void generate_system(const LensSystem &system, unsigned scenario, FILE *fp) {
         auto view_angles = system.find_variable("Angle of View");
         fputs("s = ro.system_from_text(lensdata, columns.split(),\n"
-                "    description=description)\n",
-                fp);
+              "    description=description)\n",
+              fp);
         fputs("s.fields = 0, .7, 1.\n", fp);
         fprintf(fp, "s.object.angle = np.deg2rad(%f)\n", view_angles->get_value_as_double(scenario) / 2.0);
     }
@@ -506,7 +506,8 @@ public:
     void generate_rest(const LensSystem &system, FILE *fp) {
         fputs("s.update()\n"
               "print(s)\n"
-              "ro.Analysis(s)\n", fp);
+              "ro.Analysis(s)\n",
+              fp);
     }
 
     void generate(const LensSystem &system, unsigned scenario = 0, FILE *fp = stdout) {
@@ -524,9 +525,13 @@ int main(int argc, const char *argv[]) {
         fprintf(stderr, "Please provide a file name");
         exit(1);
     }
+    unsigned scenario = 0;
+    if (argc == 3) {
+        scenario = atoi(argv[2]);
+    }
     LensSystem system;
     system.parse_file(argv[1]);
     RayOptGenerator generator;
-    generator.generate(system, 2);
+    generator.generate(system, scenario);
     return 0;
 }
