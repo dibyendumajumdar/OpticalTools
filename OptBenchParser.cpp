@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+#include <cassert>
 #include <cstdio>
 
 class DescriptiveData {
@@ -38,6 +39,9 @@ public:
     double data(int i) const {
         return i >= 0 && i < data_.size() ? data_[i] : 0.0;
     }
+    int get_surface_number() const {
+        return surface_number_;
+    }
 
 private:
     int surface_number_;
@@ -59,7 +63,14 @@ public:
     }
     double get_radius() const { return radius_; }
     void set_radius(double radius) { radius_ = radius; }
-    double get_thickness(unsigned scenario) const { return thickness_by_scenario_[scenario]; }
+    double get_thickness(unsigned scenario) const {
+        if (scenario < thickness_by_scenario_.size())
+            return thickness_by_scenario_[scenario];
+        else {
+            assert(1 == thickness_by_scenario_.size());
+            return thickness_by_scenario_[0];
+        }
+    }
     void add_thickness(double thickness) { thickness_by_scenario_.push_back(thickness); }
     double get_diameter() const { return diameter_; }
     void set_diameter(double value) { diameter_ = value; }
@@ -330,11 +341,13 @@ bool LensSystem::parse_file(const std::string &file_name) {
                     surface_data->set_radius(0.0);
                     surface_data->set_is_cover_glass(true);
                 } else {
-                    surface_data->set_radius(strtod(words[1], NULL));
+                    if (strcmp(words[1], "Infinity") == 0)
+                        surface_data->set_radius(0.0);
+                    else
+                        surface_data->set_radius(strtod(words[1], NULL));
                 }
                 surface_data->set_surface_type(type);
                 /* thickness */
-
                 if (words.size() >= 3 && strlen(words[2]) > 0) {
                     parse_thickness(words[2], surface_data);
                 }
@@ -423,10 +436,12 @@ public:
         auto view_angles = system.find_variable("Angle of View");
         auto image_heights = system.find_variable("Image Height");
         auto back_focus = system.find_variable("Bf");
+        auto aperture_diameters = system.find_variable("Aperture Diameter");
 
         if (scenario >= view_angles->num_scenarios() ||
             scenario >= image_heights->num_scenarios() ||
-            scenario >= back_focus->num_scenarios()) {
+            scenario >= back_focus->num_scenarios() ||
+            scenario >= aperture_diameters->num_scenarios()) {
             fprintf(stderr, "Scenario %u has missing data\n", scenario);
             return;
         }
@@ -434,7 +449,7 @@ public:
         fputs("columns = \"type distance roc diameter material\"\n", fp);
         fprintf(fp, "# number of surfaces = %u\n", (unsigned) surfaces.size());
         fputs("lensdata = \"\"\"\n", fp);
-        fprintf(fp, "O 0.0 0.0 %f AIR\n", image_heights->get_value_as_double(scenario) * 1.3);
+        fprintf(fp, "O 0.0 0.0 %.6g AIR\n", surfaces[0]->get_diameter() * 1.3);
         double Bf = back_focus->get_value_as_double(scenario);
         for (unsigned i = 0; i < surfaces.size(); i++) {
             auto s = surfaces[i];
@@ -443,38 +458,55 @@ public:
                 Bf = s->get_thickness(scenario);
             }
             const char *type = s->get_surface_type() == SurfaceType::surface ? "S" : "A";
+            double diameter = s->get_diameter();
+            if (s->get_surface_type() == SurfaceType::aperture_stop) {
+                diameter = aperture_diameters->get_value_as_double(scenario);
+            }
             if (s->get_refractive_index() != 0.0) {
-                fprintf(fp, "%s %f %f %f %f/%f\n",
+                fprintf(fp, "%s %.6g %.6g %.6g %.6g/%.6g\n",
                         type,
                         get_thickness(system, i, scenario),
                         s->get_radius(),
-                        s->get_diameter(),
+                        diameter,
                         s->get_refractive_index(),
                         s->get_abbe_vd());
             } else {
-                fprintf(fp, "%s %f %f %f AIR\n",
+                fprintf(fp, "%s %.6g %.6g %.6g AIR\n",
                         type,
                         get_thickness(system, i, scenario),
                         s->get_radius(),
-                        s->get_diameter());
+                        diameter);
             }
         }
-        fprintf(fp, "I %f 0 %f AIR\n", Bf, image_heights->get_value_as_double(scenario));
+        fprintf(fp, "I %.6g 0 %.6g AIR\n", Bf, image_heights->get_value_as_double(scenario));
         fputs("\"\"\"\n", fp);
     }
 
     void generate_system(const LensSystem &system, unsigned scenario, FILE *fp) {
         auto view_angles = system.find_variable("Angle of View");
-        fputs("s = ro.system_from_text(text, columns.split(),\n"
+        fputs("s = ro.system_from_text(lensdata, columns.split(),\n"
                 "    description=description)\n",
                 fp);
-        fputs("s.fields = 0, .7, 1.", fp);
+        fputs("s.fields = 0, .7, 1.\n", fp);
         fprintf(fp, "s.object.angle = np.deg2rad(%f)\n", view_angles->get_value_as_double(scenario) / 2.0);
     }
 
     void generate_aspherics(const LensSystem &system, FILE *fp) {
         auto aspheres = system.get_aspherical_data();
+        for (unsigned i = 0; i < aspheres.size(); i++) {
+            auto asphere = aspheres[i];
+            fprintf(fp, "s[%d].conic = %.6g\n", asphere->get_surface_number(), asphere->data(1));
+            fprintf(fp, "s[%d].aspherics = [0, %.6g, %.6g, %.6g, %.6g, %.6g, %.6g]\n",
+                    asphere->get_surface_number(),
+                    asphere->data(2), asphere->data(3), asphere->data(4),
+                    asphere->data(5), asphere->data(6), asphere->data(7));
+        }
+    }
 
+    void generate_rest(const LensSystem &system, FILE *fp) {
+        fputs("s.update()\n"
+              "print(s)\n"
+              "ro.Analysis(s)\n", fp);
     }
 
     void generate(const LensSystem &system, unsigned scenario = 0, FILE *fp = stdout) {
@@ -482,6 +514,8 @@ public:
         generate_description(system, fp);
         generate_lens_data(system, scenario, fp);
         generate_system(system, scenario, fp);
+        generate_aspherics(system, fp);
+        generate_rest(system, fp);
     }
 };
 
@@ -493,6 +527,6 @@ int main(int argc, const char *argv[]) {
     LensSystem system;
     system.parse_file(argv[1]);
     RayOptGenerator generator;
-    generator.generate(system);
+    generator.generate(system, 2);
     return 0;
 }
