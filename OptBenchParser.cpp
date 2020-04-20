@@ -441,7 +441,7 @@ public:
         if (scenario >= view_angles->num_scenarios() ||
             scenario >= image_heights->num_scenarios() ||
             scenario >= back_focus->num_scenarios() ||
-            scenario >= aperture_diameters->num_scenarios()) {
+                (aperture_diameters && scenario >= aperture_diameters->num_scenarios())) {
             fprintf(stderr, "Scenario %u has missing data\n", scenario);
             return;
         }
@@ -459,7 +459,7 @@ public:
             }
             const char *type = s->get_surface_type() == SurfaceType::surface ? "S" : "A";
             double diameter = s->get_diameter();
-            if (s->get_surface_type() == SurfaceType::aperture_stop) {
+            if (s->get_surface_type() == SurfaceType::aperture_stop && aperture_diameters) {
                 diameter = aperture_diameters->get_value_as_double(scenario);
             }
             if (s->get_refractive_index() != 0.0) {
