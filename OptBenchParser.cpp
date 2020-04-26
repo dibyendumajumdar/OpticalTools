@@ -50,7 +50,10 @@ private:
 
 enum SurfaceType { surface,
                    aperture_stop,
+                   field_stop
 };
+const char *SurfaceTypeNames[] = {
+        "S", "AS", "FS"};
 
 class Surface {
 public:
@@ -90,6 +93,10 @@ public:
     }
     void set_is_cover_glass(bool is_cover_glass) {
         is_cover_glass_ = is_cover_glass;
+    }
+    void dump(FILE *fp, unsigned scenario = 0) {
+        fprintf(fp, "Surface[%d] = type=%s radius=%.6g thickness=%.6g diameter = %.6g nd = %.6g vd = %.6g\n",
+                id_, SurfaceTypeNames[surface_type_], radius_, get_thickness(scenario), diameter_, refractive_index_, abbe_vd_);
     }
 
 private:
@@ -293,6 +300,7 @@ bool LensSystem::parse_file(const std::string &file_name) {
     char buf[256];                  // for tokenizing
     std::vector<const char *> words;// tokenized words
     int current_section = 0;        // Current section
+    int surface_id = 1;             // We used to read the id from the OptBench data but this doesn't always work
 
     while (fgets(line, sizeof line, fp) != NULL) {
 
@@ -330,12 +338,15 @@ bool LensSystem::parse_file(const std::string &file_name) {
             case LENS_DATA: {
                 if (words.size() < 2)
                     break;
-                int id = atoi(words[0]);
+                int id = surface_id++;
                 auto surface_data = std::make_shared<Surface>(id);
                 SurfaceType type = SurfaceType::surface;
                 /* radius */
                 if (strcmp(words[1], "AS") == 0) {
                     type = SurfaceType::aperture_stop;
+                    surface_data->set_radius(0.0);
+                } else if (strcmp(words[1], "FS") == 0) {
+                    type = SurfaceType::field_stop;
                     surface_data->set_radius(0.0);
                 } else if (strcmp(words[1], "CG") == 0) {
                     surface_data->set_radius(0.0);
@@ -427,11 +438,36 @@ public:
         }
         auto surfaces = system.get_surfaces();
         // TODO d0
+        // rayopt requires that we put the thickness of element at post 1
+        // on element at pos+1. So that means that when we are requested
+        // pos, we need to get pos-1.
+        // Now pos - 1 could be an FS, in which case we need to back up
+        // and get pos - 2 and and the FS thickness to pos - 2 because we can't
+        // deal with FS.
         auto s = surfaces[id - 1];
-        return s->get_thickness(scenario);
+        double fs = 0.0;
+        if (s->get_surface_type() == SurfaceType::field_stop) {
+            //s->dump(stderr);
+            if (s->get_id() < 1) {
+                fprintf(stderr, "Bad data at surface %d, \n", s->get_id());
+                exit(1);
+            }
+            // Add the field stop to the thickness
+            fs = s->get_thickness(scenario);
+            s = surfaces[id - 2];
+            //s->dump(stderr);
+            //fprintf(stderr, "Will add FS thickness %.6g to element\n",  fs);
+        }
+        double thickness = fs + s->get_thickness(scenario);
+        // print thickness
+        return thickness;
     }
 
-    void generate_lens_data(const LensSystem &system, unsigned scenario, FILE *fp) {
+    /* handling of Field Stop surface is problematic because it messes up the
+     * numbering of surfaces and therefore we need to adjust the surface id
+     * when we see a field stop. Currently we cannot handle more than 1 field stop.
+     */
+    void generate_lens_data(const LensSystem &system, unsigned scenario, unsigned *fs, FILE *fp) {
         auto surfaces = system.get_surfaces();
         auto view_angles = system.find_variable("Angle of View");
         auto image_heights = system.find_variable("Image Height");
@@ -441,7 +477,7 @@ public:
         if (scenario >= view_angles->num_scenarios() ||
             scenario >= image_heights->num_scenarios() ||
             scenario >= back_focus->num_scenarios() ||
-                (aperture_diameters && scenario >= aperture_diameters->num_scenarios())) {
+            (aperture_diameters && scenario >= aperture_diameters->num_scenarios())) {
             fprintf(stderr, "Scenario %u has missing data\n", scenario);
             return;
         }
@@ -451,8 +487,18 @@ public:
         fputs("lensdata = \"\"\"\n", fp);
         fprintf(fp, "O 0.0 0.0 %.6g AIR\n", surfaces[0]->get_diameter() * 1.3);
         double Bf = back_focus->get_value_as_double(scenario);
+        *fs = 0;
         for (unsigned i = 0; i < surfaces.size(); i++) {
             auto s = surfaces[i];
+            if (s->get_surface_type() == SurfaceType::field_stop) {
+                if (*fs == 0)
+                    *fs = (unsigned) s->get_id();
+                else {
+                    fprintf(stderr, "Cannot process second surface of type FS\n");
+                    s->dump(stderr);
+                }
+                continue;
+            }
             if (i + 1 == surfaces.size() && s->is_cover_glass()) {
                 // Oddity - override the Bf
                 Bf = s->get_thickness(scenario);
@@ -491,13 +537,15 @@ public:
         fprintf(fp, "s.object.angle = np.deg2rad(%f)\n", view_angles->get_value_as_double(scenario) / 2.0);
     }
 
-    void generate_aspherics(const LensSystem &system, FILE *fp) {
+    void generate_aspherics(const LensSystem &system, unsigned fs, FILE *fp) {
         auto aspheres = system.get_aspherical_data();
         for (unsigned i = 0; i < aspheres.size(); i++) {
             auto asphere = aspheres[i];
-            fprintf(fp, "s[%d].conic = %.6g\n", asphere->get_surface_number(), asphere->data(1));
+            /* If there was a field stop then our aspheric indices will be out by 1 */
+            int id = asphere->get_surface_number() > fs ? asphere->get_surface_number() - 1 : asphere->get_surface_number();// Adjust for skipped field stop
+            fprintf(fp, "s[%d].conic = %.6g\n", id, asphere->data(1));
             fprintf(fp, "s[%d].aspherics = [0, %.6g, %.6g, %.6g, %.6g, %.6g, %.6g]\n",
-                    asphere->get_surface_number(),
+                    id,
                     asphere->data(2), asphere->data(3), asphere->data(4),
                     asphere->data(5), asphere->data(6), asphere->data(7));
         }
@@ -511,11 +559,13 @@ public:
     }
 
     void generate(const LensSystem &system, unsigned scenario = 0, FILE *fp = stdout) {
-        generate_preamble(fp);
+        unsigned fs = 0;
+        if (scenario == 0)
+            generate_preamble(fp);
         generate_description(system, fp);
-        generate_lens_data(system, scenario, fp);
+        generate_lens_data(system, scenario, &fs, fp);
         generate_system(system, scenario, fp);
-        generate_aspherics(system, fp);
+        generate_aspherics(system, fs, fp);
         generate_rest(system, fp);
     }
 };
