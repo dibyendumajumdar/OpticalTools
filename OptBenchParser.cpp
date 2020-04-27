@@ -570,6 +570,139 @@ public:
     }
 };
 
+class KDPGenerator {
+public:
+    double get_thickness(const LensSystem &system, unsigned id, unsigned scenario) {
+        if (id == 0) {
+            return 20.0;
+        }
+        auto surfaces = system.get_surfaces();
+        auto s = surfaces[id];
+        double fs = 0.0;
+        if (s->get_surface_type() == SurfaceType::field_stop) {
+            //s->dump(stderr);
+            if (s->get_id() < 1) {
+                fprintf(stderr, "Bad data at surface %d, \n", s->get_id());
+                exit(1);
+            }
+            // Add the field stop to the thickness
+            fs = s->get_thickness(scenario);
+            s = surfaces[id - 1];
+            //s->dump(stderr);
+            //fprintf(stderr, "Will add FS thickness %.6g to element\n",  fs);
+        }
+        double thickness = fs + s->get_thickness(scenario);
+        // print thickness
+        return thickness;
+    }
+    void generate_preamble(const LensSystem &system, FILE *fp) {
+        auto descriptive_data = system.get_descriptive_data();
+        auto title = descriptive_data.get_title();
+        fprintf(fp,
+                "LENS\n"
+                "LI,%s\n"
+                "WV,0.58756,0.48613,0.65627,0.0,0.0\n"
+                "UNITS MM\n",
+                title.c_str());
+    }
+    void generate_system(const LensSystem &system, unsigned scenario, FILE *fp) {
+        auto view_angles = system.find_variable("Angle of View");
+        fprintf(fp, "SCY FANG %.6g\n", view_angles->get_value_as_double(scenario) / 2.0);
+    }
+    void generate_object_conjugate(const LensSystem &system, unsigned scenario, FILE *fp) {
+        fprintf(fp, "C Object conjugate TODO\n");
+        fputs("TH 1.0E20\n"
+              "AIR\n"
+              "AIR\n", fp);
+    }
+    void generate_aspherics(const std::shared_ptr<AsphericalData> asphere, FILE *fp) {
+            fprintf(fp, "CC %.6g\n", asphere->data(1));
+            fprintf(fp, "ASPH,%.6g,%.6g,%.6g,%.6g,0.0\n",
+                    asphere->data(2), asphere->data(3), asphere->data(4),
+                    asphere->data(5), asphere->data(6), asphere->data(7));
+            if (asphere->data_points() > 6) {
+                fprintf(fp, "ASPH2,%.6g,%.6g,%.6g,%.6g,%.6g\n",
+                        asphere->data(6), asphere->data(7), asphere->data(8),
+                        asphere->data(9), asphere->data(10));
+            }
+    }
+
+    /* handling of Field Stop surface is problematic because it messes up the
+ * numbering of surfaces and therefore we need to adjust the surface id
+ * when we see a field stop. Currently we cannot handle more than 1 field stop.
+ */
+    void generate_lens_data(const LensSystem &system, unsigned scenario, unsigned *fs, FILE *fp) {
+        auto surfaces = system.get_surfaces();
+        auto view_angles = system.find_variable("Angle of View");
+        auto image_heights = system.find_variable("Image Height");
+        auto back_focus = system.find_variable("Bf");
+        auto aperture_diameters = system.find_variable("Aperture Diameter");
+
+        if (scenario >= view_angles->num_scenarios() ||
+            scenario >= image_heights->num_scenarios() ||
+            scenario >= back_focus->num_scenarios() ||
+            (aperture_diameters && scenario >= aperture_diameters->num_scenarios())) {
+            fprintf(stderr, "Scenario %u has missing data\n", scenario);
+            return;
+        }
+        fprintf(fp, "C number of surfaces = %u\n", (unsigned) surfaces.size());
+        double Bf = back_focus->get_value_as_double(scenario);
+        *fs = 0;
+        for (unsigned i = 0; i < surfaces.size(); i++) {
+            auto s = surfaces[i];
+            if (s->get_surface_type() == SurfaceType::field_stop) {
+                if (*fs == 0)
+                    *fs = (unsigned) s->get_id();
+                else {
+                    fprintf(stderr, "Cannot process second surface of type FS\n");
+                    s->dump(stderr);
+                }
+                continue;
+            }
+            if (i + 1 == surfaces.size() && s->is_cover_glass()) {
+                // Oddity - override the Bf
+                Bf = s->get_thickness(scenario);
+            }
+            const char *type = s->get_surface_type() == SurfaceType::surface ? "S" : "A";
+            double diameter = s->get_diameter();
+            if (s->get_surface_type() == SurfaceType::aperture_stop && aperture_diameters) {
+                diameter = aperture_diameters->get_value_as_double(scenario);
+            }
+            fprintf(fp, "C THE FOLLOWING DATA REFERS TO SURFACE #%d\n", s->get_id());
+            fprintf(fp, "TH %.6g\n", get_thickness(system, i, scenario));
+            fprintf(fp, "CLAP %.6g\n", diameter/2.0);
+            if (s->get_surface_type() == SurfaceType::surface) {
+                fprintf(fp, "RD %.6g\n", s->get_radius());
+                if (s->get_refractive_index() != 0.0) {
+                    fprintf(fp, "MODEL G%d,%.6g,%.6g\n", s->get_id(), s->get_refractive_index(), s->get_abbe_vd());
+                } else {
+                    fprintf(fp, "AIR\n");
+                }
+                auto aspherics = s->get_aspherical_data();
+                if (aspherics) {
+                    generate_aspherics(aspherics, fp);
+                }
+            }
+            else if (s->get_surface_type() == SurfaceType::aperture_stop) {
+                fprintf(fp, "ASTOP\n");
+            }
+        }
+    }
+    void generate_rest(FILE *fp) {
+        fputs("AIR\n"
+              "EOS\n"
+              "LEPRT\n", fp);
+    }
+    void generate(const LensSystem &system, unsigned scenario = 0, FILE *fp = stdout) {
+        unsigned fs = 0;
+        generate_preamble(system, fp);
+        generate_system(system, scenario, fp);
+        generate_object_conjugate(system, scenario, fp);
+        generate_lens_data(system, scenario, &fs, fp);
+        generate_rest(fp);
+    }
+};
+
 int main(int argc, const char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Please provide a file name");
@@ -581,7 +714,10 @@ int main(int argc, const char *argv[]) {
     }
     LensSystem system;
     system.parse_file(argv[1]);
-    RayOptGenerator generator;
+//    RayOptGenerator generator;
+//    generator.generate(system, scenario);
+    KDPGenerator generator;
     generator.generate(system, scenario);
+
     return 0;
 }
