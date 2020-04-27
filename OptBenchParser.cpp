@@ -670,14 +670,14 @@ public:
                 fprintf(fp, "RD %.6g\n", s->get_radius());
                 fprintf(fp, "TH %.6g\n", get_thickness(system, i, scenario));
                 fprintf(fp, "CLAP %.6g\n", diameter/2.0);
+                auto aspherics = s->get_aspherical_data();
+                if (aspherics) {
+                    generate_aspherics(aspherics, fp);
+                }
                 if (s->get_refractive_index() != 0.0) {
                     fprintf(fp, "MODEL G%d,%.6g,%.6g\n", s->get_id(), s->get_refractive_index(), s->get_abbe_vd());
                 } else {
                     fprintf(fp, "AIR\n");
-                }
-                auto aspherics = s->get_aspherical_data();
-                if (aspherics) {
-                    generate_aspherics(aspherics, fp);
                 }
             }
             else if (s->get_surface_type() == SurfaceType::aperture_stop) {
@@ -688,7 +688,7 @@ public:
         }
     }
     void generate_rest(FILE *fp) {
-        fputs("AIR\n"
+        fputs("AIR\nAIR\n"
               "EOS\n"
               "LEPRT\n", fp);
     }
