@@ -95,7 +95,7 @@ public:
         is_cover_glass_ = is_cover_glass;
     }
     void dump(FILE *fp, unsigned scenario = 0) {
-        fprintf(fp, "Surface[%d] = type=%s radius=%.6g thickness=%.6g diameter = %.6g nd = %.6g vd = %.6g\n",
+        fprintf(fp, "Surface[%d] = type=%s radius=%.12g thickness=%.12g diameter = %.12g nd = %.12g vd = %.12g\n",
                 id_, SurfaceTypeNames[surface_type_], radius_, get_thickness(scenario), diameter_, refractive_index_, abbe_vd_);
     }
 
@@ -456,7 +456,7 @@ public:
             fs = s->get_thickness(scenario);
             s = surfaces[id - 2];
             //s->dump(stderr);
-            //fprintf(stderr, "Will add FS thickness %.6g to element\n",  fs);
+            //fprintf(stderr, "Will add FS thickness %.12g to element\n",  fs);
         }
         double thickness = fs + s->get_thickness(scenario);
         // print thickness
@@ -485,7 +485,7 @@ public:
         fputs("columns = \"type distance roc diameter material\"\n", fp);
         fprintf(fp, "# number of surfaces = %u\n", (unsigned) surfaces.size());
         fputs("lensdata = \"\"\"\n", fp);
-        fprintf(fp, "O 0.0 0.0 %.6g AIR\n", surfaces[0]->get_diameter() * 1.3);
+        fprintf(fp, "O 0.0 0.0 %.12g AIR\n", surfaces[0]->get_diameter() * 1.3);
         double Bf = back_focus->get_value_as_double(scenario);
         *fs = 0;
         for (unsigned i = 0; i < surfaces.size(); i++) {
@@ -503,13 +503,14 @@ public:
                 // Oddity - override the Bf
                 Bf = s->get_thickness(scenario);
             }
+            //s->dump(stderr, scenario);
             const char *type = s->get_surface_type() == SurfaceType::surface ? "S" : "A";
             double diameter = s->get_diameter();
             if (s->get_surface_type() == SurfaceType::aperture_stop && aperture_diameters) {
                 diameter = aperture_diameters->get_value_as_double(scenario);
             }
             if (s->get_refractive_index() != 0.0) {
-                fprintf(fp, "%s %.6g %.6g %.6g %.6g/%.6g\n",
+                fprintf(fp, "%s %.12g %.12g %.12g %.12g/%.12g\n",
                         type,
                         get_thickness(system, i, scenario),
                         s->get_radius(),
@@ -517,14 +518,14 @@ public:
                         s->get_refractive_index(),
                         s->get_abbe_vd());
             } else {
-                fprintf(fp, "%s %.6g %.6g %.6g AIR\n",
+                fprintf(fp, "%s %.12g %.12g %.12g AIR\n",
                         type,
                         get_thickness(system, i, scenario),
                         s->get_radius(),
                         diameter);
             }
         }
-        fprintf(fp, "I %.6g 0 %.6g AIR\n", Bf, image_heights->get_value_as_double(scenario));
+        fprintf(fp, "I %.12g 0 %.12g AIR\n", Bf, image_heights->get_value_as_double(scenario));
         fputs("\"\"\"\n", fp);
     }
 
@@ -543,8 +544,8 @@ public:
             auto asphere = aspheres[i];
             /* If there was a field stop then our aspheric indices will be out by 1 */
             int id = asphere->get_surface_number() > fs ? asphere->get_surface_number() - 1 : asphere->get_surface_number();// Adjust for skipped field stop
-            fprintf(fp, "s[%d].conic = %.6g\n", id, asphere->data(1));
-            fprintf(fp, "s[%d].aspherics = [0, %.6g, %.6g, %.6g, %.6g, %.6g, %.6g]\n",
+            fprintf(fp, "s[%d].conic = %.12g\n", id, asphere->data(1));
+            fprintf(fp, "s[%d].aspherics = [0, %.12g, %.12g, %.12g, %.12g, %.12g, %.12g]\n",
                     id,
                     asphere->data(2), asphere->data(3), asphere->data(4),
                     asphere->data(5), asphere->data(6), asphere->data(7));
@@ -586,7 +587,7 @@ public:
             fs = s->get_thickness(scenario);
             s = surfaces[id - 1];
             //s->dump(stderr);
-            //fprintf(stderr, "Will add FS thickness %.6g to element\n",  fs);
+            //fprintf(stderr, "Will add FS thickness %.12g to element\n",  fs);
         }
         double thickness = fs + s->get_thickness(scenario);
         // print thickness
@@ -604,24 +605,25 @@ public:
     }
     void generate_system(const LensSystem &system, unsigned scenario, FILE *fp) {
         auto view_angles = system.find_variable("Angle of View");
-        fprintf(fp, "SCY FANG %.6g\n", view_angles->get_value_as_double(scenario) / 2.0);
+        fprintf(fp, "SCY FANG %.12g\n", view_angles->get_value_as_double(scenario) / 2.0);
     }
     void generate_object_conjugate(const LensSystem &system, unsigned scenario, FILE *fp) {
         fprintf(fp, "C Object conjugate TODO\n");
         fputs("TH 1.0E20\n"
               "AIR\n"
-              "AIR\n", fp);
+              "AIR\n",
+              fp);
     }
     void generate_aspherics(const std::shared_ptr<AsphericalData> asphere, FILE *fp) {
-            fprintf(fp, "CC %.6g\n", asphere->data(1));
-            fprintf(fp, "ASPH,%.6g,%.6g,%.6g,%.6g,0.0\n",
-                    asphere->data(2), asphere->data(3), asphere->data(4),
-                    asphere->data(5), asphere->data(6), asphere->data(7));
-            if (asphere->data_points() > 6) {
-                fprintf(fp, "ASPH2,%.6g,%.6g,%.6g,%.6g,%.6g\n",
-                        asphere->data(6), asphere->data(7), asphere->data(8),
-                        asphere->data(9), asphere->data(10));
-            }
+        fprintf(fp, "CC %.12g\n", asphere->data(1));
+        fprintf(fp, "ASPH,%.12g,%.12g,%.12g,%.12g,0.0\n",
+                asphere->data(2), asphere->data(3), asphere->data(4),
+                asphere->data(5), asphere->data(6), asphere->data(7));
+        if (asphere->data_points() > 6) {
+            fprintf(fp, "ASPH2,%.12g,%.12g,%.12g,%.12g,%.12g\n",
+                    asphere->data(6), asphere->data(7), asphere->data(8),
+                    asphere->data(9), asphere->data(10));
+        }
     }
 
     /* handling of Field Stop surface is problematic because it messes up the
@@ -667,22 +669,21 @@ public:
             }
             fprintf(fp, "C THE FOLLOWING DATA REFERS TO SURFACE #%d\n", s->get_id());
             if (s->get_surface_type() == SurfaceType::surface) {
-                fprintf(fp, "RD %.6g\n", s->get_radius());
-                fprintf(fp, "TH %.6g\n", get_thickness(system, i, scenario));
-                fprintf(fp, "CLAP %.6g\n", diameter/2.0);
+                fprintf(fp, "RD %.12g\n", s->get_radius());
+                fprintf(fp, "TH %.12g\n", get_thickness(system, i, scenario));
+                fprintf(fp, "CLAP %.12g\n", diameter / 2.0);
                 auto aspherics = s->get_aspherical_data();
                 if (aspherics) {
                     generate_aspherics(aspherics, fp);
                 }
                 if (s->get_refractive_index() != 0.0) {
-                    fprintf(fp, "MODEL G%d,%.6g,%.6g\n", s->get_id(), s->get_refractive_index(), s->get_abbe_vd());
+                    fprintf(fp, "MODEL G%d,%.12g,%.12g\n", s->get_id(), s->get_refractive_index(), s->get_abbe_vd());
                 } else {
                     fprintf(fp, "AIR\n");
                 }
-            }
-            else if (s->get_surface_type() == SurfaceType::aperture_stop) {
-                fprintf(fp, "TH %.6g\n", get_thickness(system, i, scenario));
-                fprintf(fp, "CLAP %.6g\n", diameter/2.0);
+            } else if (s->get_surface_type() == SurfaceType::aperture_stop) {
+                fprintf(fp, "TH %.12g\n", get_thickness(system, i, scenario));
+                fprintf(fp, "CLAP %.12g\n", diameter / 2.0);
                 fprintf(fp, "REFS\nASTOP\nAIR\n");
             }
         }
@@ -690,7 +691,8 @@ public:
     void generate_rest(FILE *fp) {
         fputs("AIR\nAIR\n"
               "EOS\n"
-              "LEPRT\n", fp);
+              "LEPRT\n",
+              fp);
     }
     void generate(const LensSystem &system, unsigned scenario = 0, FILE *fp = stdout) {
         unsigned fs = 0;
@@ -713,10 +715,10 @@ int main(int argc, const char *argv[]) {
     }
     LensSystem system;
     system.parse_file(argv[1]);
-//    RayOptGenerator generator;
-//    generator.generate(system, scenario);
-    KDPGenerator generator;
+    RayOptGenerator generator;
     generator.generate(system, scenario);
+    //    KDPGenerator generator;
+    //    generator.generate(system, scenario);
 
     return 0;
 }
