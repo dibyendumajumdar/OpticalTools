@@ -573,15 +573,12 @@ public:
 class KDPGenerator {
 public:
     double get_thickness(const LensSystem &system, unsigned id, unsigned scenario) {
-        if (id == 0) {
-            return 20.0;
-        }
         auto surfaces = system.get_surfaces();
         auto s = surfaces[id];
         double fs = 0.0;
         if (s->get_surface_type() == SurfaceType::field_stop) {
             //s->dump(stderr);
-            if (s->get_id() < 1) {
+            if (s->get_id() == 0) {
                 fprintf(stderr, "Bad data at surface %d, \n", s->get_id());
                 exit(1);
             }
@@ -669,10 +666,10 @@ public:
                 diameter = aperture_diameters->get_value_as_double(scenario);
             }
             fprintf(fp, "C THE FOLLOWING DATA REFERS TO SURFACE #%d\n", s->get_id());
-            fprintf(fp, "TH %.6g\n", get_thickness(system, i, scenario));
-            fprintf(fp, "CLAP %.6g\n", diameter/2.0);
             if (s->get_surface_type() == SurfaceType::surface) {
                 fprintf(fp, "RD %.6g\n", s->get_radius());
+                fprintf(fp, "TH %.6g\n", get_thickness(system, i, scenario));
+                fprintf(fp, "CLAP %.6g\n", diameter/2.0);
                 if (s->get_refractive_index() != 0.0) {
                     fprintf(fp, "MODEL G%d,%.6g,%.6g\n", s->get_id(), s->get_refractive_index(), s->get_abbe_vd());
                 } else {
@@ -684,7 +681,9 @@ public:
                 }
             }
             else if (s->get_surface_type() == SurfaceType::aperture_stop) {
-                fprintf(fp, "ASTOP\n");
+                fprintf(fp, "TH %.6g\n", get_thickness(system, i, scenario));
+                fprintf(fp, "CLAP %.6g\n", diameter/2.0);
+                fprintf(fp, "REFS\nASTOP\nAIR\n");
             }
         }
     }
