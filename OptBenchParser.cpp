@@ -494,8 +494,8 @@ public:
                 if (*fs == 0)
                     *fs = (unsigned) s->get_id();
                 else {
-                    fprintf(stderr, "Cannot process second surface of type FS\n");
-                    s->dump(stderr);
+                    //fprintf(stderr, "Cannot process second surface of type FS\n");
+                    //s->dump(stderr);
                 }
                 continue;
             }
@@ -543,7 +543,7 @@ public:
         for (unsigned i = 0; i < aspheres.size(); i++) {
             auto asphere = aspheres[i];
             /* If there was a field stop then our aspheric indices will be out by 1 */
-            int id = asphere->get_surface_number() > fs ? asphere->get_surface_number() - 1 : asphere->get_surface_number();// Adjust for skipped field stop
+            int id = fs != 0 && asphere->get_surface_number() > fs ? asphere->get_surface_number() - 1 : asphere->get_surface_number();// Adjust for skipped field stop
             fprintf(fp, "s[%d].conic = %.12g\n", id, asphere->data(1));
             fprintf(fp, "s[%d].aspherics = [0, %.12g, %.12g, %.12g, %.12g, %.12g, %.12g]\n",
                     id,
@@ -627,9 +627,9 @@ public:
     }
 
     /* handling of Field Stop surface is problematic because it messes up the
- * numbering of surfaces and therefore we need to adjust the surface id
- * when we see a field stop. Currently we cannot handle more than 1 field stop.
- */
+    * numbering of surfaces and therefore we need to adjust the surface id
+    * when we see a field stop. Currently we cannot handle more than 1 field stop.
+    */
     void generate_lens_data(const LensSystem &system, unsigned scenario, unsigned *fs, FILE *fp) {
         auto surfaces = system.get_surfaces();
         auto view_angles = system.find_variable("Angle of View");
