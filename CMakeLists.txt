@@ -4,3 +4,4 @@ project(OpticalTools)
 set(CMAKE_CXX_STANDARD 14)
 
 add_executable(OptBenchParser OptBenchParser.cpp)
+add_executable(RayTracer RayTracer.cpp)

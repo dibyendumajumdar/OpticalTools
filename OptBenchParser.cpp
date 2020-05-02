@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cmath>
 
 class DescriptiveData {
 public:
@@ -42,7 +43,13 @@ public:
     int get_surface_number() const {
         return surface_number_;
     }
-
+    void dump(FILE *fp) {
+        fprintf(fp, "Aspheric values[%d] = ", surface_number_);
+        for (int i = 0; i < data_points(); i++) {
+            fprintf(fp, "%.12g ", data(i));
+        }
+        fputc('\n', fp);
+    }
 private:
     int surface_number_;
     std::vector<double> data_;
@@ -129,6 +136,14 @@ public:
         }
         return std::shared_ptr<Surface>();
     }
+    void dump(FILE *fp = stdout, unsigned scenario = 0) {
+        for (int i = 0; i < surfaces_.size(); i++) {
+            surfaces_.at(i)->dump(fp, scenario);
+            if (surfaces_.at(i)->get_aspherical_data()) {
+                surfaces_.at(i)->get_aspherical_data()->dump(fp);
+            }
+        }
+    }
 
 private:
     void parse_thickness(const char *value, std::shared_ptr<Surface> surface_builder) const {
@@ -152,6 +167,7 @@ private:
             surface_builder->add_thickness(strtod(value, NULL));
         }
     }
+
 
 public:
     const DescriptiveData &get_descriptive_data() const;
@@ -705,6 +721,7 @@ public:
 };
 
 int main(int argc, const char *argv[]) {
+
     if (argc < 2) {
         fprintf(stderr, "Please provide a file name");
         exit(1);
@@ -715,10 +732,10 @@ int main(int argc, const char *argv[]) {
     }
     LensSystem system;
     system.parse_file(argv[1]);
-    RayOptGenerator generator;
+    system.dump(stdout, scenario);
+//        RayOptGenerator generator;
+//        generator.generate(system, scenario);
+    KDPGenerator generator;
     generator.generate(system, scenario);
-    //    KDPGenerator generator;
-    //    generator.generate(system, scenario);
-
     return 0;
 }
