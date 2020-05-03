@@ -3,9 +3,8 @@ let svgContent = d3.select("#content")
   .attr("width", 400)
   .attr("height", 400);
 
-// Draw rectangle
-svgContent.append("rect")
-  .attr("x", 10)
-  .attr("y", 10)
-  .attr("width", 100)
-  .attr("height", 100);
+let line = d3.line()([[10, 60], [40, 90], [60, 10], [190, 10]]);
+svgContent.append("path")
+  .attr("d", line)
+  .attr("stroke", "blue")
+  .attr("fill", "none");
