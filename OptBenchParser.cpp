@@ -3,8 +3,8 @@
 #include <vector>
 
 #include <cassert>
-#include <cstdio>
 #include <cmath>
+#include <cstdio>
 
 class DescriptiveData {
 public:
@@ -50,6 +50,7 @@ public:
         }
         fputc('\n', fp);
     }
+
 private:
     int surface_number_;
     std::vector<double> data_;
@@ -733,9 +734,9 @@ int main(int argc, const char *argv[]) {
     LensSystem system;
     system.parse_file(argv[1]);
     system.dump(stdout, scenario);
-//        RayOptGenerator generator;
-//        generator.generate(system, scenario);
-    KDPGenerator generator;
+    RayOptGenerator generator;
     generator.generate(system, scenario);
+    //    KDPGenerator generator;
+    //    generator.generate(system, scenario);
     return 0;
 }
