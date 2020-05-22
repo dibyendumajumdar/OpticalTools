@@ -37,6 +37,7 @@ public:
     AsphericalData(int surface_number) : surface_number_(surface_number) {}
     void add_data(double d) { data_.push_back(d); }
     int data_points() const { return data_.size(); }
+    // K is 1, A_4 is 2, ...
     double data(int i) const {
         return i >= 0 && i < data_.size() ? data_[i] : 0.0;
     }
@@ -721,6 +722,126 @@ public:
     }
 };
 
+class RayGenerator {
+public:
+    double get_thickness(const LensSystem &system, unsigned id, unsigned scenario) {
+        auto surfaces = system.get_surfaces();
+        auto s = surfaces[id];
+        double fs = 0.0;
+        if (s->get_surface_type() == SurfaceType::field_stop) {
+            //s->dump(stderr);
+            if (s->get_id() == 0) {
+                fprintf(stderr, "Bad data at surface %d, \n", s->get_id());
+                exit(1);
+            }
+            // Add the field stop to the thickness
+            fs = s->get_thickness(scenario);
+            s = surfaces[id - 1];
+            //s->dump(stderr);
+            //fprintf(stderr, "Will add FS thickness %.12g to element\n",  fs);
+        }
+        double thickness = fs + s->get_thickness(scenario);
+        // print thickness
+        return thickness;
+    }
+    void generate_preamble(const LensSystem &system, FILE *fp) {
+        auto descriptive_data = system.get_descriptive_data();
+        auto title = descriptive_data.get_title();
+        fprintf(fp,
+                "System %s\nDigits 5 0.00000001\n",
+                title.c_str());
+    }
+    double getRefractiveIndexRatio(const LensSystem &system, unsigned i) {
+        auto surfaces = system.get_surfaces();
+        if (i == 0) {
+            return 1.0 / surfaces[i]->get_refractive_index();
+        } else {
+            unsigned prev = i - 1;
+            if (surfaces[prev]->get_surface_type() == SurfaceType::aperture_stop) {
+                prev--;
+            }
+            // 1.0 is AIR
+            double N = surfaces[prev]->get_refractive_index() != 0.0 ? surfaces[prev]->get_refractive_index() : 1.0;
+            double N1 = surfaces[i]->get_refractive_index() != 0.0 ? surfaces[i]->get_refractive_index() : 1.0;
+            double ratio = N/N1 ;
+            return ratio;
+        }
+    }
+    /* handling of Field Stop surface is problematic because it messes up the
+    * numbering of surfaces and therefore we need to adjust the surface id
+    * when we see a field stop. Currently we cannot handle more than 1 field stop.
+    */
+    void generate_lens_data(const LensSystem &system, unsigned scenario, unsigned *fs, FILE *fp) {
+        auto surfaces = system.get_surfaces();
+        auto view_angles = system.find_variable("Angle of View");
+        auto image_heights = system.find_variable("Image Height");
+        auto back_focus = system.find_variable("Bf");
+        auto aperture_diameters = system.find_variable("Aperture Diameter");
+
+        if (scenario >= view_angles->num_scenarios() ||
+            scenario >= image_heights->num_scenarios() ||
+            scenario >= back_focus->num_scenarios() ||
+            (aperture_diameters && scenario >= aperture_diameters->num_scenarios())) {
+            fprintf(stderr, "Scenario %u has missing data\n", scenario);
+            return;
+        }
+        double Bf = back_focus->get_value_as_double(scenario);
+        *fs = 0;
+        double thickness = 0;
+        for (unsigned i = 0; i < surfaces.size(); i++) {
+            auto s = surfaces[i];
+            if (s->get_surface_type() == SurfaceType::field_stop) {
+                if (*fs == 0)
+                    *fs = (unsigned) s->get_id();
+                else {
+                    fprintf(stderr, "Cannot process second surface of type FS\n");
+                    s->dump(stderr);
+                }
+                continue;
+            }
+            if (i + 1 == surfaces.size() && s->is_cover_glass()) {
+                // Oddity - override the Bf
+                Bf = s->get_thickness(scenario);
+            }
+            const char *type = s->get_surface_type() == SurfaceType::surface ? "S" : "A";
+            double diameter = s->get_diameter();
+            if (s->get_surface_type() == SurfaceType::aperture_stop && aperture_diameters) {
+                diameter = aperture_diameters->get_value_as_double(scenario);
+            }
+            //fprintf(fp, "# THE FOLLOWING DATA REFERS TO SURFACE #%d\n", s->get_id());
+            double c = s->get_radius() != 0.0 ? 1.0/s->get_radius(): 0.0;
+            double mu = s->get_surface_type() == SurfaceType::surface ? getRefractiveIndexRatio(system, i) : 1.0; // For aperture stop set mu to 1.0
+            double x = thickness;
+            thickness += get_thickness(system, i, scenario);
+            auto aspherics = s->get_aspherical_data();
+            if (aspherics) {
+                double k = aspherics->data(1)+1.0;
+                fprintf(stdout, "rayAddSurface S%d %g %g %g %g %g %g 0 0 0 0 0 %g %g %g %g %g\n", i, c, k, 0.0, aspherics->data(2),
+                        mu, x, aspherics->data(3), aspherics->data(4), aspherics->data(5), aspherics->data(6), aspherics->data(7));
+            }
+            else {
+                fprintf(stdout, "rayAddSurface S%d %g %g %g %g %g %g 0 0 0 0 0 %g %g %g %g %g\n", i, c, 1.0, 0.0, 0.0,
+                        mu, x, 0.0, 0.0, 0.0, 0.0, 0.0);
+            }
+        }
+    }
+    void generate_rest(FILE *fp) {
+        fputs("rayPrtSystem\n"
+              "rayGenerator \"spherical\"@[-150000, 0, 0] & [1, 0, 0]0.00020 50000, 2, 4, 4	0.1, -0.001	2, 13 \"bundle\"\n"
+              "rayTrace\n"
+              "rayGetFoci\n"
+              "rayPrtFoci\n"
+              "Quit\n",
+              fp);
+    }
+    void generate(const LensSystem &system, unsigned scenario = 0, FILE *fp = stdout) {
+        unsigned fs = 0;
+        generate_preamble(system, fp);
+        generate_lens_data(system, scenario, &fs, fp);
+        generate_rest(fp);
+    }
+};
+
 int main(int argc, const char *argv[]) {
 
     if (argc < 2) {
@@ -734,9 +855,11 @@ int main(int argc, const char *argv[]) {
     LensSystem system;
     system.parse_file(argv[1]);
     system.dump(stdout, scenario);
-    RayOptGenerator generator;
-    generator.generate(system, scenario);
+//    RayOptGenerator generator;
+//    generator.generate(system, scenario);
     //    KDPGenerator generator;
     //    generator.generate(system, scenario);
+    RayGenerator generator;
+    generator.generate(system, scenario);
     return 0;
 }
