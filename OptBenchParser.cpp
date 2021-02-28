@@ -231,7 +231,7 @@ static bool parse_delimited(char *input_start, size_t input_size,
                         *wordp++ = 0;
                         input_ptr++;
                         if (input_ptr < input_end &&
-                            (*input_ptr == ',' || *input_ptr == '\t' ||
+                            (// *input_ptr == ',' || *input_ptr == '\t' ||
                              (delimiters && strchr(delimiters, *input_ptr)))) {
                             // Skip delimiter
                             // following quote
@@ -246,7 +246,7 @@ static bool parse_delimited(char *input_start, size_t input_size,
                 }
             } else {
                 // Not in quoted word
-                if (*input_ptr == ',' || *input_ptr == '\t' ||
+                if (//*input_ptr == ',' || *input_ptr == '\t' ||
                     (delimiters && strchr(delimiters, *input_ptr))) {
                     // word ends due to delimiter
                     *wordp++ = 0;
@@ -842,6 +842,164 @@ public:
     }
 };
 
+class RayOpticsGenerator {
+public:
+    double get_thickness(const LensSystem &system, unsigned id, unsigned scenario) {
+        auto surfaces = system.get_surfaces();
+        auto s = surfaces[id];
+        double fs = 0.0;
+        if (s->get_surface_type() == SurfaceType::field_stop) {
+            //s->dump(stderr);
+            if (s->get_id() == 0) {
+                fprintf(stderr, "Bad data at surface %d, \n", s->get_id());
+                exit(1);
+            }
+            // Add the field stop to the thickness
+            fs = s->get_thickness(scenario);
+            s = surfaces[id - 1];
+            //s->dump(stderr);
+            //fprintf(stderr, "Will add FS thickness %.12g to element\n",  fs);
+        }
+        double thickness = fs + s->get_thickness(scenario);
+        // print thickness
+        return thickness;
+    }
+
+    double get_angle_of_view(const LensSystem &system, unsigned scenario) {
+        auto view_angles = system.find_variable("Angle of View");
+        return view_angles->get_value_as_double(scenario) / 2.0;
+    }
+    void generate_preamble(const LensSystem &system, unsigned scenario, FILE *fp) {
+        auto descriptive_data = system.get_descriptive_data();
+        auto title = descriptive_data.get_title();
+        auto f_number = system.find_variable("F-Number");
+        fprintf(fp,
+                "%%matplotlib inline\n"
+                "isdark = False\n"
+                "from rayoptics.environment import *\n"
+                "from rayoptics.elem.elements import Element\n"
+                "from rayoptics.raytr.trace import apply_paraxial_vignetting\n"
+                "\n"
+                "# %s\n"
+                "# Obtained via https://www.photonstophotos.net/GeneralTopics/Lenses/OpticalBench/OpticalBenchHub.htm\n"
+                "\n"
+                "opm = OpticalModel()\n"
+                "sm  = opm.seq_model\n"
+                "osp = opm.optical_spec\n"
+                "pm = opm.parax_model\n"
+                "osp.pupil = PupilSpec(osp, key=['image', 'f/#'], value=%g)\n"
+                "osp.field_of_view = FieldSpec(osp, key=['object', 'angle'], flds=[0., %g])\n"
+                "osp.spectral_region = WvlSpec([(486.1327, 0.5), (587.5618, 1.0), (656.2725, 0.5)], ref_wl=1)\n"
+                "opm.system_spec.title = '%s'\n"
+                "opm.system_spec.dimensions = 'MM'\n"
+                "opm.radius_mode = True\n",
+                title.c_str(),
+                f_number->get_value_as_double(scenario),
+                get_angle_of_view(system, scenario),
+                title.c_str());
+    }
+    void generate_aspherics(const std::shared_ptr<AsphericalData> asphere, FILE *fp) {
+        fprintf(fp, "sm.ifcs[-1].profile = EvenPolynomial(r=%g, ec=%g,\n", asphere->data(0), asphere->data(1));
+        fprintf(fp, "\tcoefs=[0.0,%g,%g,%g,%g,%g,%g])\n",
+                asphere->data(2), asphere->data(3), asphere->data(4),
+                asphere->data(5), asphere->data(6), asphere->data(7));
+    }
+    /* handling of Field Stop surface is problematic because it messes up the
+    * numbering of surfaces and therefore we need to adjust the surface id
+    * when we see a field stop. Currently we cannot handle more than 1 field stop.
+    */
+    void generate_lens_data(const LensSystem &system, unsigned scenario, unsigned *fs, FILE *fp) {
+        auto surfaces = system.get_surfaces();
+        auto view_angles = system.find_variable("Angle of View");
+        auto image_heights = system.find_variable("Image Height");
+        auto back_focus = system.find_variable("Bf");
+        auto aperture_diameters = system.find_variable("Aperture Diameter");
+
+        if (scenario >= view_angles->num_scenarios() ||
+            scenario >= image_heights->num_scenarios() ||
+            scenario >= back_focus->num_scenarios() ||
+            (aperture_diameters && scenario >= aperture_diameters->num_scenarios())) {
+            fprintf(stderr, "Scenario %u has missing data\n", scenario);
+            return;
+        }
+        fprintf(fp, "sm.gaps[0].thi=1e10\n");
+        double Bf = back_focus->get_value_as_double(scenario);
+        *fs = 0;
+        for (unsigned i = 0; i < surfaces.size(); i++) {
+            auto s = surfaces[i];
+            if (s->get_surface_type() == SurfaceType::field_stop) {
+                if (*fs == 0)
+                    *fs = (unsigned) s->get_id();
+                else {
+                    fprintf(stderr, "Cannot process second surface of type FS\n");
+                    s->dump(stderr);
+                }
+                continue;
+            }
+            if (i + 1 == surfaces.size() && s->is_cover_glass()) {
+                // Oddity - override the Bf
+                Bf = s->get_thickness(scenario);
+            }
+            const char *type = s->get_surface_type() == SurfaceType::surface ? "S" : "A";
+            double diameter = s->get_diameter();
+            if (s->get_surface_type() == SurfaceType::aperture_stop && aperture_diameters) {
+                diameter = aperture_diameters->get_value_as_double(scenario);
+            }
+            if (s->get_surface_type() == SurfaceType::surface) {
+                if (s->get_refractive_index() != 0.0) {
+                    fprintf(fp, "sm.add_surface([%g,%g,%g,%g])\n", s->get_radius(),
+                            get_thickness(system, i, scenario),
+                            s->get_refractive_index(),
+                            s->get_abbe_vd());
+                }
+                else {
+                    fprintf(fp, "sm.add_surface([%g,%g])\n", s->get_radius(),
+                            get_thickness(system, i, scenario));
+                }
+                auto aspherics = s->get_aspherical_data();
+                if (aspherics) {
+                    generate_aspherics(aspherics, fp);
+                }
+            } else if (s->get_surface_type() == SurfaceType::aperture_stop) {
+                fprintf(fp, "sm.add_surface([%g,%g])\n", s->get_radius(),
+                        get_thickness(system, i, scenario));
+                fprintf(fp, "sm.set_stop()\n");
+            }
+            fprintf(fp, "sm.ifcs[-1].max_aperture = %g\n", diameter / 2.0);
+        }
+    }
+    void generate_rest(FILE *fp) {
+        fputs("sm.list_surfaces()\n"
+              "sm.list_gaps()\n"
+              "opm.update_model()\n"
+              "apply_paraxial_vignetting(opm)\n"
+              "layout_plt = plt.figure(FigureClass=InteractiveLayout, opt_model=opm, do_draw_rays=True, do_paraxial_layout=False,\n"
+              "                        is_dark=isdark).plot()\n"
+              "sm.list_model()\n"
+              "# List the optical specifications\n"
+              "pm.first_order_data()\n"
+              "# List the paraxial model\n"
+              "pm.list_lens()\n"
+              "# Plot the transverse ray aberrations\n"
+              "abr_plt = plt.figure(FigureClass=RayFanFigure, opt_model=opm,\n"
+              "          data_type='Ray', scale_type=Fit.All_Same, is_dark=isdark).plot()\n"
+              "# Plot the wavefront aberration\n"
+              "wav_plt = plt.figure(FigureClass=RayFanFigure, opt_model=opm,\n"
+              "          data_type='OPD', scale_type=Fit.All_Same, is_dark=isdark).plot()\n"
+              "# Plot spot diagrams\n"
+              "spot_plt = plt.figure(FigureClass=SpotDiagramFigure, opt_model=opm, \n"
+              "                      scale_type=Fit.User_Scale, user_scale_value=0.1, is_dark=isdark).plot()\n",
+              fp);
+    }
+    void generate(const LensSystem &system, unsigned scenario = 0, FILE *fp = stdout) {
+        unsigned fs = 0;
+        generate_preamble(system, scenario, fp);
+        generate_lens_data(system, scenario, &fs, fp);
+        generate_rest(fp);
+    }
+};
+
+
 int main(int argc, const char *argv[]) {
 
     if (argc < 2) {
@@ -855,11 +1013,11 @@ int main(int argc, const char *argv[]) {
     LensSystem system;
     system.parse_file(argv[1]);
     system.dump(stdout, scenario);
-//    RayOptGenerator generator;
-//    generator.generate(system, scenario);
-    //    KDPGenerator generator;
-    //    generator.generate(system, scenario);
-    RayGenerator generator;
+    //RayOptGenerator generator;
+    //KDPGenerator generator;
+//    RayGenerator generator;
+
+    RayOpticsGenerator generator;
     generator.generate(system, scenario);
     return 0;
 }
