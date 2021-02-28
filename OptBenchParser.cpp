@@ -899,7 +899,7 @@ public:
                 title.c_str());
     }
     void generate_aspherics(const std::shared_ptr<AsphericalData> asphere, FILE *fp) {
-        fprintf(fp, "sm.ifcs[-1].profile = EvenPolynomial(r=%g, ec=%g,\n", asphere->data(0), asphere->data(1));
+        fprintf(fp, "sm.ifcs[sm.cur_surface].profile = EvenPolynomial(r=%g, cc=%g,\n", asphere->data(0), asphere->data(1));
         fprintf(fp, "\tcoefs=[0.0,%g,%g,%g,%g,%g,%g])\n",
                 asphere->data(2), asphere->data(3), asphere->data(4),
                 asphere->data(5), asphere->data(6), asphere->data(7));
@@ -965,7 +965,7 @@ public:
                         get_thickness(system, i, scenario));
                 fprintf(fp, "sm.set_stop()\n");
             }
-            fprintf(fp, "sm.ifcs[-1].max_aperture = %g\n", diameter / 2.0);
+            fprintf(fp, "sm.ifcs[sm.cur_surface].max_aperture = %g\n", diameter / 2.0);
         }
     }
     void generate_rest(FILE *fp) {
