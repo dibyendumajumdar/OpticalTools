@@ -913,6 +913,8 @@ public:
         auto view_angles = system.find_variable("Angle of View");
         auto image_heights = system.find_variable("Image Height");
         auto back_focus = system.find_variable("Bf");
+        if (!back_focus)
+            back_focus = system.find_variable("Bf(m)");
         auto aperture_diameters = system.find_variable("Aperture Diameter");
 
         if (scenario >= view_angles->num_scenarios() ||
@@ -971,6 +973,7 @@ public:
     void generate_rest(FILE *fp) {
         fputs("sm.list_surfaces()\n"
               "sm.list_gaps()\n"
+              "sm.do_apertures = False\n"
               "opm.update_model()\n"
               "apply_paraxial_vignetting(opm)\n"
               "layout_plt = plt.figure(FigureClass=InteractiveLayout, opt_model=opm, do_draw_rays=True, do_paraxial_layout=False,\n"
